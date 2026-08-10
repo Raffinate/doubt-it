@@ -14,13 +14,13 @@ Then open `http://localhost:8080`. A local server is required (not `file://`) be
 
 ## The game
 
-20 cards, collapsed into two categories: **Safe** (8 in the deck) and **Liar** (12 in the deck) — specific ranks never matter, only whether a card is safe or a lie. Each player is dealt 5 cards, shown only as a safe/liar count, plus a public revolver with 1-6 chambers loaded.
+20 cards, collapsed into two categories: **Safe** (8 in the deck) and **Liar** (12 in the deck) — specific ranks never matter, only whether a card is safe or a lie. A **match** is an elimination duel between two players that can span several **rounds** of cards, with each player's revolver chambers (1-6, dealt once, public) carrying over between rounds until someone actually dies.
 
-On your turn, play 1-3 cards face down (claimed as all safe) or call Doubt on the opponent's last play. A play must be all-safe or all-liar — mixing is never useful. The very first play of a match can't be challenged, and if your opponent's hand is empty, calling Doubt is your only legal move — every match resolves in exactly one call.
+Each round, both players are dealt 5 fresh cards, shown only as a safe/liar count. On your turn, play 1-3 cards face down (claimed as all safe) or call Doubt on the opponent's last play. A play must be all-safe or all-liar — mixing is never useful. The very first play of a round can't be challenged, and if your opponent's hand is empty, calling Doubt is your only legal move — every round resolves in exactly one call.
 
-**Resolution**, once a call happens: whoever's wrong (the liar if caught, the wrongful caller if the play was truthful) spins the revolver alone first. Die, and the match ends. Survive, and your own chambers drop by one, then **both players fire simultaneously** each round — chambers ticking down together on a mutual survival — until someone (or both) actually dies. This is guaranteed to terminate; it can't loop forever.
+**Resolution**, once a call happens: whoever's wrong (the liar if caught, the wrongful caller if the play was truthful) — "the spinner" — spins the revolver **alone**, once, at their own current chambers. The other player's chambers are untouched. Die, and the match ends. Survive, and the spinner's own chambers drop by one, then the match continues: a fresh round is dealt, with both players' chambers exactly as they now stand. This repeats — only the spinner's side ever takes damage in a given round — until an eventual solo spin ends the match.
 
-Being **correct** about the call and **surviving** the resolution are two different things, tracked separately — the same way winning an all-in in poker doesn't mean the shove was +EV. A correct call can still end in death if your own chambers are unlucky.
+Being **correct** about a call and **surviving** that round's spin are two different things, tracked separately — the same way winning an all-in in poker doesn't mean the shove was +EV. A correct call can still end in death if your own chambers are unlucky.
 
 ## Strategies
 

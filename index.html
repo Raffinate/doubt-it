@@ -448,23 +448,24 @@ kbd {
     </div>
     <div id="help-body">
       <h3>What is Doubt It?</h3>
-      <p>Doubt It is the classic bluffing card game — play cards face down claiming they're all one type, or call out the last player for lying — with a single-round, high-stakes twist: whoever's wrong ends up spinning a revolver.</p>
+      <p>Doubt It is the classic bluffing card game — play cards face down claiming they're all one type, or call out the last player for lying — with a high-stakes twist: whoever's wrong ends up spinning a revolver. A match is an elimination duel that can span several rounds of cards, with your revolver's chambers carrying over between them.</p>
 
       <h3>The deck</h3>
-      <p>20 cards, but only two things ever matter: whether a card is <strong>Safe</strong> (8 in the deck) or a <strong>Liar</strong> card (12 in the deck). Each player is dealt 5 cards, shown only as a safe/liar count — never the specific cards.</p>
+      <p>20 cards, but only two things ever matter: whether a card is <strong>Safe</strong> (8 in the deck) or a <strong>Liar</strong> card (12 in the deck). Each player is dealt 5 fresh cards every round, shown only as a safe/liar count — never the specific cards.</p>
 
-      <h3>How a hand plays</h3>
+      <h3>How a round plays</h3>
       <ol>
-        <li>Both players are dealt 5 cards (a safe/liar count) and a revolver with 1-6 chambers loaded, both public.</li>
+        <li>At the start of a match, both players' revolvers are loaded with 1-6 chambers, public and unchanging until someone actually spins.</li>
+        <li>Each round, both players are dealt 5 fresh cards (a safe/liar count).</li>
         <li>On your turn, play 1-3 cards face down — claimed as all Safe — or call Doubt on the last play.</li>
         <li>A play must be all-safe or all-liar; mixing is never useful and isn't offered.</li>
-        <li>The very first play of the match can't be challenged — nothing's been played yet.</li>
+        <li>The very first play of a round can't be challenged — nothing's been played yet.</li>
         <li>If your opponent just emptied their hand, calling Doubt is your only legal move.</li>
       </ol>
 
       <h3>Resolution</h3>
-      <p>Calling Doubt reveals the challenged play. If it contained any Liar card, the player who played it lied and must resolve; otherwise the caller was wrong and resolves instead. That player ("the spinner") spins the revolver alone first — die, and the match is over. Survive, and your chambers count drops by one, then <strong>both players fire simultaneously</strong> each round, chambers ticking down together, until someone (or both) actually dies. It's mathematically guaranteed to end — the shootout can't loop forever.</p>
-      <p>Note: being <strong>correct</strong> about the call and <strong>surviving</strong> are two different things. A correct call can still end badly if your own chambers are unlucky — the same way winning an all-in in poker doesn't mean the shove was the right price.</p>
+      <p>Calling Doubt reveals the challenged play. If it contained any Liar card, the player who played it lied and must spin; otherwise the caller was wrong and spins instead. That player ("the spinner") spins the revolver <strong>alone</strong>, once, at their own current chambers — the other player's chambers are untouched. Die, and the match is over. Survive, and your own chambers drop by one, then the match continues: a brand new round is dealt, with chambers exactly as they now stand. This repeats — only the spinner's side ever takes damage in any given round — until an eventual solo spin ends the match.</p>
+      <p>Note: being <strong>correct</strong> about a call and <strong>surviving</strong> that round's spin are two different things, tracked separately. A correct call can still end badly if your own chambers are unlucky — the same way winning an all-in in poker doesn't mean the shove was the right price.</p>
 
       <h3>Actions</h3>
       <table>

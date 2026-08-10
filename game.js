@@ -53,8 +53,18 @@ function dealHands() {
     return [h0, h1];
 }
 
-function dealChambers() {
-    return [1 + Math.floor(Math.random() * 6), 1 + Math.floor(Math.random() * 6)];
+const FULL_CHAMBERS = 6;
+
+// A brand new match starts with two revolvers nobody has fired: both players
+// begin at a full 6 chambers. Asymmetric chamber counts only ever emerge
+// honestly, through actual play, as one side or the other loses calls and
+// survives spins over the course of the match — not from independent random
+// dealing at the start. (The Rust solver *does* deal chambers independently
+// and uniformly at 1-6, but that's specifically so its trained policy
+// generalizes to whatever chamber state a round happens to start at
+// mid-match — it was never meant to describe what a fresh match looks like.)
+function initialChambers() {
+    return [FULL_CHAMBERS, FULL_CHAMBERS];
 }
 
 function sampleWeighted(items, weight) {
@@ -98,58 +108,28 @@ function actionLabel(action) {
     return `play_s${action.hand.safe}l${action.hand.liar}`;
 }
 
-function actionsEqual(a, b) {
-    if (a.type !== b.type) return false;
-    if (a.type === 'call') return true;
-    return a.hand.safe === b.hand.safe && a.hand.liar === b.hand.liar;
-}
-
-// ── Resolution — actually simulated, not the closed-form EV the solver uses ──
+// ── Resolution — the real chain-of-rounds structure, not the solver's
+// closed-form proxy ─────────────────────────────────────────────────────────
 //
-// The Rust solver collapses this into a precomputed expected value purely
-// because CFR has to re-walk it every training iteration and there's no
-// player decision inside it. The web app plays one concrete match at a time,
-// so it samples the real two-phase process step by step: the Liar-call loser
-// ("the spinner") spins alone first; if they survive, both players fire
-// simultaneously each round until someone (or both) actually dies. This is
-// guaranteed to terminate — every "both survive" strictly decreases both
-// remaining chambers, so within at most min(a,b) rounds one side reaches
-// certain death and the shootout must resolve.
+// The Rust solver only ever solves ONE round of card-bluffing, and represents
+// "what happens if you lose the call and survive" via a precomputed
+// closed-form expected value (resolve_utility/shootout_ev) — a mathematical
+// substitute invented specifically so CFR wouldn't have to simulate an
+// unbounded chain of rounds. That substitute was never meant to describe what
+// literally happens turn by turn.
+//
+// The real structure (this is what the web app plays): whoever loses a call
+// ("the spinner") spins the revolver ALONE, once, at their current chambers.
+// Die, and the match is over. Survive, and their own chambers drop by one —
+// the OTHER player's chambers are untouched — and the match continues with a
+// brand new round: fresh hands dealt, same persisting chambers. This repeats,
+// with only the spinner's side ever taking damage in any given round, until
+// an eventual solo-spin death ends the match. Each round's bluffing is solved
+// independently by the same trained policy, keyed on whatever chambers each
+// player currently has going into that specific round.
 
-function sampleInitialSpin(chambers) {
+function sampleSpin(chambers) {
     return Math.random() < 1 / chambers; // true = fatal
-}
-
-function sampleShootoutRound(a, b) {
-    const aDies = Math.random() < 1 / a;
-    const bDies = Math.random() < 1 / b;
-    if (aDies && bDies) return 'both_die';
-    if (aDies) return 'a_dies';
-    if (bDies) return 'b_dies';
-    return 'both_survive';
-}
-
-// Returns { log: [...steps], outcome: 'spinner_dies'|'other_dies'|'both_die' }.
-// `spinner`/`other` are player indices; `log` entries carry enough detail to
-// render/replay the sequence step by step.
-function resolveCall(chambers, spinner) {
-    const other = 1 - spinner;
-    const log = [];
-    let a = chambers[spinner], b = chambers[other];
-
-    const spinnerDied = sampleInitialSpin(a);
-    log.push({ step: 'initial_spin', spinner, died: spinnerDied });
-    if (spinnerDied) return { log, outcome: 'spinner_dies' };
-
-    a -= 1;
-    while (true) {
-        const result = sampleShootoutRound(a, b);
-        log.push({ step: 'shootout', a, b, result });
-        if (result === 'both_survive') { a -= 1; b -= 1; continue; }
-        if (result === 'a_dies') return { log, outcome: 'spinner_dies' };
-        if (result === 'b_dies') return { log, outcome: 'other_dies' };
-        return { log, outcome: 'both_die' };
-    }
 }
 
 // ── Strategy dispatch ──────────────────────────────────────────────────────
@@ -176,18 +156,18 @@ function chooseAction(strategyData, hand, ownChambers, oppChambers, roundHistory
 
 let gStrategy = 'exact';
 let gStrategyData = null;
-let gHands = [null, null];      // [{safe,liar}, {safe,liar}] — opponent's may be unknown (multiplayer guest)
-let gRemaining = [5, 5];        // cards left in each hand, always known to both sides
-let gChambers = null;           // [1-6, 1-6]
-let gRoundHistory = [];         // play sizes this match, e.g. [2,1]
+let gHands = [null, null];      // [{safe,liar}, {safe,liar}] — this round's deal; opponent's unknown until reveal
+let gRemaining = [5, 5];        // cards left in each hand this round, always known to both sides
+let gChambers = null;           // [1-6, 1-6] — persists across rounds of the current match
+let gRoundNum = 0;              // 1-indexed round number within the current match
+let gRoundHistory = [];         // play sizes this round, e.g. [2,1]
 let gLastPlay = null;           // {player, hand:{safe,liar}} — hand only known to the actor until reveal
-let gLastPlaySize = null;       // publicly known size of gLastPlay, tracked separately for the guest
 let gHuman = 0;
 let gResult = null;             // set once a call resolves; see recordResult()
 let gLastAi = null;             // last AI action, for display
-let gStats = { hands: 0, correct: 0, incorrect: 0, survived: 0, died: 0, doubleDied: 0 };
+let gStats = { matches: 0, matchWins: 0, matchLosses: 0, correctCalls: 0, incorrectCalls: 0 };
 let gPlaying = false;
-let gHistory = [];              // hand-history log, unshifted newest-first
+let gHistory = [];              // one entry per resolved call (round), newest first
 
 // ── Multiplayer state ──────────────────────────────────────────────────────
 
@@ -268,10 +248,10 @@ async function mpHost() {
             gMode = 'mp-host';
             document.getElementById('mp-setup').style.display = 'none';
             gPlaying = true;
-            gStats = { hands: 0, correct: 0, incorrect: 0, survived: 0, died: 0, doubleDied: 0 };
+            gStats = { matches: 0, matchWins: 0, matchLosses: 0, correctCalls: 0, incorrectCalls: 0 };
             gHistory = [];
             setStatus('playing');
-            newHand();
+            newMatch();
         });
         conn.on('data', raw => mpReceive(JSON.parse(raw)));
         conn.on('close', () => stopGame());
@@ -295,7 +275,7 @@ async function mpJoin() {
             gMode = 'mp-guest';
             gStrategy = 'human';
             gPlaying = true;
-            gStats = { hands: 0, correct: 0, incorrect: 0, survived: 0, died: 0, doubleDied: 0 };
+            gStats = { matches: 0, matchWins: 0, matchLosses: 0, correctCalls: 0, incorrectCalls: 0 };
             gHistory = [];
             document.getElementById('mp-setup').style.display = 'none';
             setStatus('playing');
@@ -318,6 +298,7 @@ function mpReceive(msg) {
         gHands = [null, null];
         gHands[gHuman] = msg.yourHand;
         gChambers = msg.chambers;
+        gRoundNum = msg.round;
         gRemaining = [5, 5];
         gRoundHistory = []; gLastPlay = null; gResult = null; gLastAi = null;
         render();
@@ -327,14 +308,14 @@ function mpReceive(msg) {
         gRemaining = msg.remaining;
         render();
     } else if (msg.type === 'result') {
-        recordResult(msg.spinner, msg.correct, msg.resolution, msg.revealedHand, msg.revealedBy);
+        recordResult(msg.payload);
         render();
     } else if (msg.type === 'action') {
         // host receives guest's action
         applyAction(msg.action, gGuestSeat);
         if (gResult === null) { mpSendState(); advance(); }
     } else if (msg.type === 'new_session') {
-        gStats = { hands: 0, correct: 0, incorrect: 0, survived: 0, died: 0, doubleDied: 0 };
+        gStats = { matches: 0, matchWins: 0, matchLosses: 0, correctCalls: 0, incorrectCalls: 0 };
         gHistory = [];
         renderHistory();
         renderStats();
@@ -342,25 +323,43 @@ function mpReceive(msg) {
 }
 
 // ── Game loop ──────────────────────────────────────────────────────────────
+// A MATCH is the full elimination duel: chambers are dealt once and persist
+// (only ever decremented by an actual survived solo spin) until someone dies.
+// A ROUND is one hand of cards within that match, played out to one call.
 
-function newHand() {
-    gRoundHistory = []; gLastPlay = null; gResult = null; gLastAi = null;
-    gRemaining = [5, 5];
+function newMatch() {
+    gChambers = initialChambers();
+    gRoundNum = 0;
     if (gMode === 'mp-host') {
         gGuestSeat = Math.random() < 0.5 ? 0 : 1;
         gHuman = 1 - gGuestSeat;
+    } else if (gMode !== 'mp-guest') {
+        gHuman = Math.random() < 0.5 ? 0 : 1;
+    }
+    newRound();
+    // mp-guest: waits for 'start' message from host
+}
+
+function newRound() {
+    gRoundNum++;
+    gRoundHistory = []; gLastPlay = null; gResult = null; gLastAi = null;
+    gRemaining = [5, 5];
+    if (gMode === 'mp-host') {
         gHands = dealHands();
-        gChambers = dealChambers();
-        mpSend({ type: 'start', guestSeat: gGuestSeat, yourHand: gHands[gGuestSeat], chambers: gChambers });
+        mpSend({ type: 'start', guestSeat: gGuestSeat, yourHand: gHands[gGuestSeat], chambers: gChambers, round: gRoundNum });
         mpSendState();
         advance();
     } else if (gMode !== 'mp-guest') {
-        gHuman = Math.random() < 0.5 ? 0 : 1;
         gHands = dealHands();
-        gChambers = dealChambers();
         advance();
     }
-    // mp-guest: waits for 'start' message from host
+}
+
+// Called after a resolved call to move on: another round if the match is
+// still live, or a brand new match (fresh chambers) if it just ended.
+function continueAfterResult() {
+    if (gResult && gResult.matchOver) newMatch();
+    else newRound();
 }
 
 function advance() {
@@ -384,7 +383,7 @@ function applyAction(action, player) {
     gLastAi = null;
     if (action.type === 'call') {
         const spinner = gLastPlay.hand && gLastPlay.hand.liar > 0 ? gLastPlay.player : 1 - gLastPlay.player;
-        finishHand(spinner);
+        resolveCallRound(spinner);
         return;
     }
     gHands[player] = handSub(gHands[player], action.hand);
@@ -404,7 +403,7 @@ function humanAct(action) {
             gRoundHistory.push(handTotal(action.hand));
         }
         // 'call' waits for the host's authoritative 'result' — the guest never
-        // samples its own resolution, since that would diverge from the host's.
+        // samples its own spin, since that would diverge from the host's.
         render();
     } else {
         applyAction(action, gHuman);
@@ -413,45 +412,41 @@ function humanAct(action) {
     }
 }
 
-// Compute stats/history/gResult from an authoritative (spinner, correct,
-// resolution, revealedHand, revealedBy) tuple. Shared by the host/solo path
-// (finishHand, which samples the resolution itself) and the guest path
-// (mpReceive's 'result' branch, which receives it from the host).
-function recordResult(spinner, correct, resolution, revealedHand, revealedBy) {
-    const other = 1 - spinner;
-    const humanCorrect = correct === gHuman;
-    let humanDied = false, oppDied = false;
-    if (resolution.outcome === 'spinner_dies') { spinner === gHuman ? humanDied = true : oppDied = true; }
-    else if (resolution.outcome === 'other_dies') { other === gHuman ? humanDied = true : oppDied = true; }
-    else { humanDied = true; oppDied = true; } // both_die
-
-    gStats.hands++;
-    if (humanCorrect) gStats.correct++; else gStats.incorrect++;
-    if (humanDied && oppDied) gStats.doubleDied++;
-    else if (humanDied) gStats.died++;
-    else if (oppDied) gStats.survived++;
-
-    gResult = { spinner, correct, resolution, humanDied, oppDied, revealedHand, revealedBy };
-    gHistory.unshift({
-        n: gStats.hands, correct: humanCorrect, humanDied, oppDied,
-        revealedHand, revealedBy, roundHistory: gRoundHistory.slice(), human: gHuman,
-    });
-}
-
-function finishHand(spinner) {
+// Resolve a call: the spinner takes one solo spin at their CURRENT chambers.
+// Dies -> match over. Survives -> their chambers drop by one (the other
+// player's are untouched) and the match continues to a new round.
+function resolveCallRound(spinner) {
     const correct = 1 - spinner;
-    const resolution = resolveCall(gChambers, spinner);
-    recordResult(spinner, correct, resolution, gLastPlay.hand, gLastPlay.player);
-    if (gMode === 'mp-host') {
-        mpSend({
-            type: 'result', spinner, correct, resolution,
-            revealedHand: gLastPlay.hand, revealedBy: gLastPlay.player,
-        });
-    }
+    const died = sampleSpin(gChambers[spinner]);
+    const chambersBefore = gChambers.slice();
+    if (died) gChambers[spinner] = 0;
+    else gChambers[spinner] -= 1;
+
+    const payload = {
+        spinner, correct, died, round: gRoundNum,
+        chambersBefore, chambersAfter: gChambers.slice(),
+        revealedHand: gLastPlay.hand, revealedBy: gLastPlay.player,
+        matchOver: died,
+    };
+    recordResult(payload);
+    if (gMode === 'mp-host') mpSend({ type: 'result', payload });
     render();
 }
 
-function nextHand() { newHand(); }
+// Shared by the host/solo path (resolveCallRound, which samples the spin
+// itself) and the guest path (mpReceive's 'result' branch, which receives an
+// authoritative payload from the host).
+function recordResult(payload) {
+    const { spinner, correct, matchOver } = payload;
+    const humanCorrect = correct === gHuman;
+    if (humanCorrect) gStats.correctCalls++; else gStats.incorrectCalls++;
+    if (matchOver) {
+        gStats.matches++;
+        if (spinner === gHuman) gStats.matchLosses++; else gStats.matchWins++;
+    }
+    gResult = payload;
+    gHistory.unshift({ ...payload, human: gHuman, roundHistory: gRoundHistory.slice() });
+}
 
 // ── Rendering ──────────────────────────────────────────────────────────────
 
@@ -492,10 +487,13 @@ function renderHands() {
     you.textContent = handLabel(gHands[gHuman]);
     chY.textContent = chamberDots(gChambers[gHuman]);
     chO.textContent = chamberDots(gChambers[1 - gHuman]);
-    if (gResult) {
-        opp.textContent = gResult.revealedBy === (1 - gHuman) ? handLabel(gResult.revealedHand) : '(not challenged)';
+    // Remaining card COUNT is public (it's how the forced-call rule works at
+    // all) — only the safe/liar COMPOSITION is hidden until a call reveals it.
+    const oppCount = gRemaining[1 - gHuman];
+    if (gResult && gResult.revealedBy === (1 - gHuman)) {
+        opp.textContent = handLabel(gResult.revealedHand);
     } else {
-        opp.textContent = '? cards face down';
+        opp.textContent = `${oppCount} card${oppCount === 1 ? '' : 's'} face down`;
     }
 }
 
@@ -503,7 +501,7 @@ function renderInfo() {
     const el = document.getElementById('game-info');
     if (!gPlaying || !gChambers) { el.innerHTML = ''; return; }
     const pos = gHuman === 0 ? 'act first' : 'act second';
-    let html = `<div class="info-row dim">You ${pos} this match</div>`;
+    let html = `<div class="info-row dim">Round ${gRoundNum} of this match &nbsp;|&nbsp; You ${pos}</div>`;
     if (gRoundHistory.length > 0) {
         html += `<div class="history">Plays so far (sizes): [${gRoundHistory.join(', ')}]</div>`;
     }
@@ -513,40 +511,30 @@ function renderInfo() {
     el.innerHTML = html;
 }
 
-function resolutionStepText(step, spinner, other, humanIs) {
-    const name = p => p === humanIs ? 'You' : 'Opponent';
-    if (step.step === 'initial_spin') {
-        const who = name(step.spinner);
-        return step.died ? `${who} spin the revolver alone… BANG. Dead.`
-                          : `${who} spin the revolver alone… click. Survive — one chamber closer.`;
-    }
-    // shootout
-    if (step.result === 'both_survive') return `Both fire — both survive. Chambers tighten, they fire again.`;
-    if (step.result === 'a_dies') return `Both fire — ${name(spinner)} is hit. Dead.`;
-    if (step.result === 'b_dies') return `Both fire — ${name(other)} is hit. Dead.`;
-    return `Both fire — both hit. A grim split.`;
-}
-
 function renderResolution() {
     const el = document.getElementById('resolution-area');
     if (!gResult) { el.innerHTML = ''; return; }
-    const { spinner, correct, resolution, humanDied, oppDied, revealedHand, revealedBy } = gResult;
-    const other = 1 - spinner;
+    const { spinner, correct, died, revealedHand, revealedBy, matchOver } = gResult;
     const revealedByStr = revealedBy === gHuman ? 'Your' : "Opponent's";
     const verdict = revealedHand.liar > 0 ? 'a LIE' : 'truthful';
     const correctStr = correct === gHuman ? 'You were' : 'Opponent was';
+    const spinnerName = spinner === gHuman ? 'You' : 'Opponent';
+    const spinnerVerb = spinner === gHuman ? 'spin' : 'spins';
+    const spinLine = died
+        ? `${spinnerName} ${spinnerVerb} the revolver… BANG. Dead.`
+        : `${spinnerName} ${spinnerVerb} the revolver… click. Survive — one chamber closer.`;
+
     let outcomeStr;
-    if (humanDied && oppDied) outcomeStr = 'Both fell — a grim split.';
-    else if (humanDied) outcomeStr = 'You died.';
-    else if (oppDied) outcomeStr = 'Opponent died. You survive.';
-    else outcomeStr = 'Survived.';
+    if (matchOver) {
+        outcomeStr = spinner === gHuman ? 'You lost the match.' : 'You won the match!';
+    } else {
+        outcomeStr = 'The match continues — dealing the next round.';
+    }
+    const cls = !matchOver ? 'draw' : (spinner === gHuman ? 'loss' : 'win');
 
-    const steps = resolution.log.map(s => `<div class="log-row dim">${resolutionStepText(s, spinner, other, gHuman)}</div>`).join('');
-
-    const cls = humanDied ? 'loss' : oppDied ? 'win' : 'draw';
     el.innerHTML = `
         <div class="reveal">${revealedByStr} challenged play is revealed: ${verdict} (${handLabel(revealedHand)})</div>
-        ${steps}
+        <div class="log-row dim">${spinLine}</div>
         <div class="result ${cls}">
             <span class="chips">${correctStr} correct</span>
             <span class="desc">${outcomeStr}</span>
@@ -560,7 +548,8 @@ function renderActions() {
 
     if (gResult) {
         if (gMode !== 'mp-guest') {
-            actEl.innerHTML = `<button class="btn btn-next" id="next-btn" onclick="nextHand()">Next hand &nbsp;<kbd>Space</kbd></button>`;
+            const label = gResult.matchOver ? 'New match' : 'Next round';
+            actEl.innerHTML = `<button class="btn btn-next" id="next-btn" onclick="continueAfterResult()">${label} &nbsp;<kbd>Space</kbd></button>`;
         } else {
             actEl.innerHTML = `<div class="dim">Waiting for host…</div>`;
         }
@@ -584,7 +573,7 @@ function renderActions() {
 function renderStats() {
     const el = document.getElementById('stats');
     if (!gPlaying) { el.textContent = ''; return; }
-    el.textContent = `${gStats.correct}✓-${gStats.incorrect}✗ correct  |  ${gStats.survived}W-${gStats.died}L-${gStats.doubleDied}D  (${gStats.hands} hands)`;
+    el.textContent = `${gStats.correctCalls}✓-${gStats.incorrectCalls}✗ correct calls  |  ${gStats.matchWins}W-${gStats.matchLosses}L matches (${gStats.matches})`;
 }
 
 function renderHistory() {
@@ -592,15 +581,16 @@ function renderHistory() {
     if (!el) return;
     if (gHistory.length === 0) { el.innerHTML = ''; return; }
     const rows = gHistory.map(h => {
-        const cls = h.humanDied ? 'loss' : h.oppDied ? 'win' : 'draw';
-        const correctStr = h.correct ? 'correct' : 'wrong';
-        const outcomeStr = h.humanDied && h.oppDied ? 'both fell' : h.humanDied ? 'you died' : h.oppDied ? 'opponent died' : 'survived';
+        const humanIsSpinner = h.spinner === h.human;
+        const cls = !h.matchOver ? 'draw' : (humanIsSpinner ? 'loss' : 'win');
+        const correctStr = (h.correct === h.human) ? 'correct' : 'wrong';
+        const outcomeStr = !h.matchOver ? 'survived, match continues' : (humanIsSpinner ? 'match lost' : 'match won');
         const revealedByStr = h.revealedBy === h.human ? 'you' : 'opponent';
         const verdict = h.revealedHand.liar > 0 ? 'lie' : 'truth';
         const histStr = h.roundHistory.length ? h.roundHistory.join(', ') : '—';
         return `<div class="log-entry">
             <div class="log-row">
-                <span class="log-n dim">#${h.n}</span>
+                <span class="log-n dim">Round ${h.round}</span>
                 <span class="log-chips ${cls}">${correctStr} / ${outcomeStr}</span>
             </div>
             <div class="log-row dim">Plays: [${histStr}] &nbsp; Revealed (${revealedByStr}): ${verdict}</div>
@@ -617,7 +607,7 @@ document.addEventListener('keydown', e => {
     if (!gPlaying) return;
     if (gResult) {
         if (gMode !== 'mp-guest' && (e.key === ' ' || e.key === 'Enter')) {
-            e.preventDefault(); nextHand();
+            e.preventDefault(); continueAfterResult();
         }
         return;
     }
@@ -645,7 +635,7 @@ function toggleTheme() {
 
 function startGame(strategy) {
     gStrategy = strategy;
-    gStats = { hands: 0, correct: 0, incorrect: 0, survived: 0, died: 0, doubleDied: 0 };
+    gStats = { matches: 0, matchWins: 0, matchLosses: 0, correctCalls: 0, incorrectCalls: 0 };
     gPlaying = false;
     gResult = null;
 
@@ -662,7 +652,7 @@ function startGame(strategy) {
             gStrategyData = data;
             gPlaying = true;
             setStatus('playing');
-            newHand();
+            newMatch();
         });
 }
 
@@ -688,11 +678,11 @@ function stopGame() {
 }
 
 function newSession() {
-    gStats = { hands: 0, correct: 0, incorrect: 0, survived: 0, died: 0, doubleDied: 0 };
+    gStats = { matches: 0, matchWins: 0, matchLosses: 0, correctCalls: 0, incorrectCalls: 0 };
     gHistory = [];
     if (gMode === 'mp-host') mpSend({ type: 'new_session' });
     renderHistory();
-    newHand();
+    newMatch();
 }
 
 function setStatus(status) {
