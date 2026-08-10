@@ -184,6 +184,7 @@ let gLastPlay = null;           // {player, hand:{safe,liar}} — hand only know
 let gHuman = 0;
 let gResult = null;              // set once the spin actually resolves; see recordResult()
 let gPendingSpin = null;         // {spinner, correct, revealedHand, revealedBy} — call made & revealed, waiting for the spinner to explicitly trigger the spin
+let gSpinTriggered = false;      // guest-only: true once they've sent 'trigger_spin' and are waiting on the host's authoritative result
 let gLastAi = null;             // last AI action, for display
 let gStats = { matches: 0, matchWins: 0, matchLosses: 0, correctCalls: 0, incorrectCalls: 0 };
 let gPlaying = false;
@@ -321,7 +322,7 @@ function mpReceive(msg) {
         gChambers = msg.chambers;
         gRoundNum = msg.round;
         gRemaining = [5, 5];
-        gRoundHistory = []; gLastPlay = null; gResult = null; gPendingSpin = null; gLastAi = null;
+        gRoundHistory = []; gLastPlay = null; gResult = null; gPendingSpin = null; gSpinTriggered = false; gLastAi = null;
         gSelected.clear();
         render();
     } else if (msg.type === 'state') {
@@ -331,6 +332,7 @@ function mpReceive(msg) {
         render();
     } else if (msg.type === 'pending_spin') {
         gPendingSpin = msg.payload;
+        gSpinTriggered = false;
         render();
     } else if (msg.type === 'trigger_spin') {
         // Host receives the guest's request to spin — the guest is the
@@ -338,6 +340,8 @@ function mpReceive(msg) {
         // the actual spin and reports the result back.
         performSpin();
     } else if (msg.type === 'result') {
+        gPendingSpin = null;
+        gSpinTriggered = false;
         recordResult(msg.payload);
         render();
     } else if (msg.type === 'action') {
@@ -372,7 +376,7 @@ function newMatch() {
 
 function newRound() {
     gRoundNum++;
-    gRoundHistory = []; gLastPlay = null; gResult = null; gPendingSpin = null; gLastAi = null;
+    gRoundHistory = []; gLastPlay = null; gResult = null; gPendingSpin = null; gSpinTriggered = false; gLastAi = null;
     gRemaining = [5, 5];
     gSelected.clear();
     if (gMode === 'mp-host') {
@@ -459,7 +463,7 @@ function humanAct(action) {
 // only they have any agency to press a key. Multiplayer: only the actual
 // spinner may trigger their own spin; the other player just watches.
 function canTriggerSpin() {
-    if (!gPendingSpin) return false;
+    if (!gPendingSpin || gSpinTriggered) return false;
     if (gMode === 'solo') return true;
     return gPendingSpin.spinner === gHuman;
 }
@@ -468,8 +472,12 @@ function triggerSpin() {
     if (!canTriggerSpin()) return;
     if (gMode === 'mp-guest') {
         // The guest is the spinner but isn't authoritative over the RNG —
-        // ask the host to actually perform the spin.
+        // ask the host to actually perform the spin, and flip the local UI
+        // to "waiting" immediately so it doesn't just sit on the same
+        // button until the host's result arrives.
+        gSpinTriggered = true;
         mpSend({ type: 'trigger_spin' });
+        render();
         return;
     }
     performSpin();
@@ -487,6 +495,7 @@ function performSpin() {
 
     const payload = { spinner, correct, died, round: gRoundNum, revealedHand, revealedBy, matchOver: died };
     gPendingSpin = null;
+    gSpinTriggered = false;
     recordResult(payload);
     if (gMode === 'mp-host') mpSend({ type: 'result', payload });
     render();
@@ -617,14 +626,12 @@ function renderHands() {
     you.innerHTML = renderCardRow(gHands[gHuman], humanCanSelect());
     chY.textContent = chamberDots(gChambers[gHuman]);
     chO.textContent = chamberDots(gChambers[1 - gHuman]);
-    // Remaining card COUNT is public (it's how the forced-call rule works at
-    // all) — only the safe/liar COMPOSITION is hidden until a call reveals it.
-    const revealed = gResult || gPendingSpin;
-    if (revealed && revealed.revealedBy === (1 - gHuman)) {
-        opp.innerHTML = renderCardRow(revealed.revealedHand, false, true);
-    } else {
-        opp.innerHTML = renderFaceDownRow(gRemaining[1 - gHuman]);
-    }
+    // The opponent's hand-slot always shows their REMAINING cards (face-down,
+    // count visible — that count is public, it's how the forced-call rule
+    // works at all). A challenged play's true composition is revealed in the
+    // PILE only (renderPile) — those cards have already left the hand, so
+    // showing them here too would just be a duplicate of the pile.
+    opp.innerHTML = renderFaceDownRow(gRemaining[1 - gHuman]);
 }
 
 function renderInfo() {
@@ -632,9 +639,6 @@ function renderInfo() {
     if (!gPlaying || !gChambers) { el.innerHTML = ''; return; }
     const pos = gHuman === 0 ? 'act first' : 'act second';
     let html = `<div class="info-row dim">Round ${gRoundNum} of this match &nbsp;|&nbsp; You ${pos}</div>`;
-    if (gRoundHistory.length > 0) {
-        html += `<div class="history">Plays so far (sizes): [${gRoundHistory.join(', ')}]</div>`;
-    }
     if (gLastAi) {
         html += `<div class="ai-action">Opponent: ${actionLabelPublic(gLastAi)}</div>`;
     }
@@ -644,25 +648,19 @@ function renderInfo() {
 function renderResolution() {
     const el = document.getElementById('resolution-area');
     if (gPendingSpin) {
-        const { spinner, correct, revealedHand, revealedBy } = gPendingSpin;
-        const revealedByStr = revealedBy === gHuman ? 'Your' : "Opponent's";
-        const verdict = revealedHand.liar > 0 ? 'a LIE' : 'truthful';
-        const correctStr = correct === gHuman ? 'You were' : 'Opponent was';
+        const { spinner } = gPendingSpin;
         const spinnerName = spinner === gHuman ? 'You' : 'Opponent';
+        const fateLine = spinner === gHuman ? 'You must face your fate.' : 'Opponent must face their fate.';
         const prompt = canTriggerSpin()
             ? `<div class="dim">Press <kbd>Space</kbd> to spin the revolver…</div>`
             : `<div class="dim">Waiting for ${spinnerName.toLowerCase()} to spin…</div>`;
         el.innerHTML = `
-            <div class="reveal">${revealedByStr} challenged play is revealed: ${verdict} (${handLabel(revealedHand)})</div>
-            <div class="result draw"><span class="chips">${correctStr} correct</span></div>
+            <div class="result draw"><span class="chips">${fateLine}</span></div>
             ${prompt}`;
         return;
     }
     if (!gResult) { el.innerHTML = ''; return; }
-    const { spinner, correct, died, revealedHand, revealedBy, matchOver } = gResult;
-    const revealedByStr = revealedBy === gHuman ? 'Your' : "Opponent's";
-    const verdict = revealedHand.liar > 0 ? 'a LIE' : 'truthful';
-    const correctStr = correct === gHuman ? 'You were' : 'Opponent was';
+    const { spinner, died, matchOver } = gResult;
     const spinnerName = spinner === gHuman ? 'You' : 'Opponent';
     const spinnerVerb = spinner === gHuman ? 'spin' : 'spins';
     const spinLine = died
@@ -678,11 +676,9 @@ function renderResolution() {
     const cls = !matchOver ? 'draw' : (spinner === gHuman ? 'loss' : 'win');
 
     el.innerHTML = `
-        <div class="reveal">${revealedByStr} challenged play is revealed: ${verdict} (${handLabel(revealedHand)})</div>
         <div class="log-row dim">${spinLine}</div>
         <div class="result ${cls}">
-            <span class="chips">${correctStr} correct</span>
-            <span class="desc">${outcomeStr}</span>
+            <span class="chips">${outcomeStr}</span>
         </div>`;
 }
 
@@ -836,6 +832,7 @@ function startGame(strategy) {
     gPlaying = false;
     gResult = null;
     gPendingSpin = null;
+    gSpinTriggered = false;
 
     if (strategy === 'human') {
         mpHost();
@@ -859,6 +856,7 @@ function stopGame() {
     gPlaying = false;
     gChambers = null;
     gPendingSpin = null;
+    gSpinTriggered = false;
     gHistory = [];
     setStatus('idle');
     document.getElementById('game-info').innerHTML = '';
