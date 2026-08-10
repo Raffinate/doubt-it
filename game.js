@@ -112,8 +112,8 @@ function callIsForced(remaining, lastPlay) {
     return lastPlay !== null && remaining[lastPlay.player] === 0;
 }
 
-function currentPlayer(roundHistory) {
-    return roundHistory.length % 2;
+function currentPlayer(roundHistory, starter) {
+    return (starter + roundHistory.length) % 2;
 }
 
 // Must exactly match LiarsDeckState::info_state_key (src/solver/games/liars_deck.rs).
@@ -180,6 +180,7 @@ let gRemaining = [5, 5];        // cards left in each hand this round, always kn
 let gChambers = null;           // [1-6, 1-6] — persists across rounds of the current match
 let gRoundNum = 0;              // 1-indexed round number within the current match
 let gRoundHistory = [];         // play sizes this round, e.g. [2,1]
+let gRoundStarter = 0;          // which seat opens THIS round — random for round 1, then whoever didn't spin last round (see newRound)
 let gLastPlay = null;           // {player, hand:{safe,liar}} — hand only known to the actor until reveal
 let gHuman = 0;
 let gResult = null;              // set once the spin actually resolves; see recordResult()
@@ -321,6 +322,7 @@ function mpReceive(msg) {
         gHands[gHuman] = msg.yourHand;
         gChambers = msg.chambers;
         gRoundNum = msg.round;
+        gRoundStarter = msg.starter;
         gRemaining = [5, 5];
         gRoundHistory = []; gLastPlay = null; gResult = null; gPendingSpin = null; gSpinTriggered = false; gLastAi = null;
         gSelected.clear();
@@ -370,18 +372,21 @@ function newMatch() {
     } else if (gMode !== 'mp-guest') {
         gHuman = Math.random() < 0.5 ? 0 : 1;
     }
-    newRound();
+    // Round 1 of a fresh match has no prior spin to derive an opener from —
+    // this coin flip is NOT carried over from how the previous match ended.
+    newRound(Math.random() < 0.5 ? 0 : 1);
     // mp-guest: waits for 'start' message from host
 }
 
-function newRound() {
+function newRound(starter) {
     gRoundNum++;
+    gRoundStarter = starter;
     gRoundHistory = []; gLastPlay = null; gResult = null; gPendingSpin = null; gSpinTriggered = false; gLastAi = null;
     gRemaining = [5, 5];
     gSelected.clear();
     if (gMode === 'mp-host') {
         gHands = dealHands();
-        mpSend({ type: 'start', guestSeat: gGuestSeat, yourHand: gHands[gGuestSeat], chambers: gChambers, round: gRoundNum });
+        mpSend({ type: 'start', guestSeat: gGuestSeat, yourHand: gHands[gGuestSeat], chambers: gChambers, round: gRoundNum, starter: gRoundStarter });
         mpSendState();
         advance();
     } else if (gMode !== 'mp-guest') {
@@ -391,16 +396,18 @@ function newRound() {
 }
 
 // Called after a resolved call to move on: another round if the match is
-// still live, or a brand new match (fresh chambers) if it just ended.
+// still live, or a brand new match (fresh chambers) if it just ended. The
+// spinner just survived a scare and drops to the responder's seat next round
+// — the other player, who wasn't on the line, opens.
 function continueAfterResult() {
     if (gResult && gResult.matchOver) newMatch();
-    else newRound();
+    else newRound(1 - gResult.spinner);
 }
 
 function advance() {
     while (true) {
         if (gResult !== null || gPendingSpin !== null) return;
-        const p = currentPlayer(gRoundHistory);
+        const p = currentPlayer(gRoundHistory, gRoundStarter);
         if (p !== gHuman) {
             if (gMode !== 'solo') { render(); return; } // wait for remote action
             const actions = legalActions(gHands[p], gRemaining, gLastPlay ? { player: gLastPlay.player } : null);
@@ -611,7 +618,7 @@ function renderPile() {
 }
 
 function humanCanSelect() {
-    return gPlaying && !gResult && !gPendingSpin && currentPlayer(gRoundHistory) === gHuman;
+    return gPlaying && !gResult && !gPendingSpin && currentPlayer(gRoundHistory, gRoundStarter) === gHuman;
 }
 
 function renderHands() {
@@ -637,7 +644,7 @@ function renderHands() {
 function renderInfo() {
     const el = document.getElementById('game-info');
     if (!gPlaying || !gChambers) { el.innerHTML = ''; return; }
-    const pos = gHuman === 0 ? 'act first' : 'act second';
+    const pos = gRoundStarter === gHuman ? 'act first' : 'act second';
     let html = `<div class="info-row dim">Round ${gRoundNum} of this match &nbsp;|&nbsp; You ${pos}</div>`;
     if (gLastAi) {
         html += `<div class="ai-action">Opponent: ${actionLabelPublic(gLastAi)}</div>`;
@@ -706,7 +713,7 @@ function renderActions() {
         return;
     }
 
-    const p = currentPlayer(gRoundHistory);
+    const p = currentPlayer(gRoundHistory, gRoundStarter);
     if (p !== gHuman) {
         if (gMode !== 'solo') actEl.innerHTML = `<div class="dim">Waiting for opponent…</div>`;
         return;
