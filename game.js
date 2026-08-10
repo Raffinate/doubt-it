@@ -79,6 +79,17 @@ function sampleWeighted(items, weight) {
 // `remaining` = [cardsLeft0, cardsLeft1], tracked independently of full hand
 // composition so a multiplayer guest (who never learns the opponent's true
 // hand) can still correctly compute the forced-call rule from public sizes.
+//
+// This only generates PURE (all-safe or all-liar) plays — that's the action
+// space the trained AI policies were solved over (mixed plays are strictly
+// dominated for a rational player, so the solver never generates them) and
+// is what the AI's own chooseAction() must stay restricted to. It is NOT a
+// real rule of the game, though: a human isn't bound by "the optimal player
+// never needs this," and round history only ever records play SIZES, never
+// composition, so the AI's policy lookup is already blind to whether a past
+// play was pure or mixed — nothing breaks if the human plays a mixed hand.
+// See humanLegalActions/currentSelectionAction for the human's actual
+// (broader) options.
 function legalActions(ownHand, remaining, lastPlay) {
     const plays = [];
     for (let size = 1; size <= MAX_PLAY; size++) {
@@ -91,6 +102,14 @@ function legalActions(ownHand, remaining, lastPlay) {
         return [{ type: 'call' }];
     }
     return [{ type: 'call' }, ...plays];
+}
+
+function canCallLiar(lastPlay) {
+    return lastPlay !== null;
+}
+
+function callIsForced(remaining, lastPlay) {
+    return lastPlay !== null && remaining[lastPlay.player] === 0;
 }
 
 function currentPlayer(roundHistory) {
@@ -168,6 +187,7 @@ let gLastAi = null;             // last AI action, for display
 let gStats = { matches: 0, matchWins: 0, matchLosses: 0, correctCalls: 0, incorrectCalls: 0 };
 let gPlaying = false;
 let gHistory = [];              // one entry per resolved call (round), newest first
+let gSelected = new Set();      // indices into the player's own hand currently clicked/selected
 
 // ── Multiplayer state ──────────────────────────────────────────────────────
 
@@ -301,6 +321,7 @@ function mpReceive(msg) {
         gRoundNum = msg.round;
         gRemaining = [5, 5];
         gRoundHistory = []; gLastPlay = null; gResult = null; gLastAi = null;
+        gSelected.clear();
         render();
     } else if (msg.type === 'state') {
         gRoundHistory = msg.roundHistory;
@@ -344,6 +365,7 @@ function newRound() {
     gRoundNum++;
     gRoundHistory = []; gLastPlay = null; gResult = null; gLastAi = null;
     gRemaining = [5, 5];
+    gSelected.clear();
     if (gMode === 'mp-host') {
         gHands = dealHands();
         mpSend({ type: 'start', guestSeat: gGuestSeat, yourHand: gHands[gGuestSeat], chambers: gChambers, round: gRoundNum });
@@ -454,16 +476,34 @@ function chamberDots(n) {
     return '●'.repeat(n) + '○'.repeat(6 - n);
 }
 
+// "safe"/"liar" stay the internal field names throughout (matching the Rust
+// solver's LiarsDeckHand{safe,liar} struct and its s{safe}l{liar} JSON key
+// format exactly) — only the display layer uses the Face-card/Number-card
+// theme: King+Queen (2 ranks x 4 suits = 8 cards) are Face cards, the
+// truthful claim; Six+Seven+Eight (3 ranks x 4 suits = 12 cards) are Number
+// cards, the bluff.
 function handLabel(h) {
     if (!h) return '?';
-    return `${h.safe} safe, ${h.liar} liar`;
+    const n = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+    return `${n(h.safe, 'Face card')}, ${n(h.liar, 'Number card')}`;
 }
 
+// Full description — reveals composition. Only ever used for a menu of the
+// PLAYER'S OWN legal actions, where that's correct (it's their own hand).
 function actionLabelText(action) {
     if (action.type === 'call') return 'Call Liar';
     const n = handTotal(action.hand);
-    const kind = action.hand.liar > 0 ? 'liar' : 'safe';
+    const kind = action.hand.liar > 0 ? 'Number cards' : 'Face cards';
     return `Play ${n} card${n === 1 ? '' : 's'} (${kind})`;
+}
+
+// Public description — size only, no composition. This is what a real
+// opponent actually observes before a call, and is the only description that
+// may ever be used to announce the OPPONENT'S move.
+function actionLabelPublic(action) {
+    if (action.type === 'call') return 'Call Liar';
+    const n = handTotal(action.hand);
+    return `Play ${n} card${n === 1 ? '' : 's'} face down`;
 }
 
 function render() {
@@ -475,25 +515,53 @@ function render() {
     renderHistory();
 }
 
+// One visual card per remaining card in `hand`, Face cards first then Number
+// cards, indices 0..hand.safe-1 / hand.safe..hand.safe+hand.liar-1. Clicking
+// a card toggles it in gSelected when `interactive`.
+function renderCardRow(hand, interactive) {
+    let html = '';
+    for (let i = 0; i < hand.safe; i++) {
+        const sel = gSelected.has(i) ? ' selected' : '';
+        const click = interactive ? ` onclick="toggleCardSelect(${i})"` : '';
+        html += `<div class="card face${sel}"${click}>K</div>`;
+    }
+    for (let i = 0; i < hand.liar; i++) {
+        const idx = hand.safe + i;
+        const sel = gSelected.has(idx) ? ' selected' : '';
+        const click = interactive ? ` onclick="toggleCardSelect(${idx})"` : '';
+        html += `<div class="card number${sel}"${click}>7</div>`;
+    }
+    return `<div class="hand-cards">${html}</div>`;
+}
+
+function renderFaceDownRow(count) {
+    let html = '';
+    for (let i = 0; i < count; i++) html += `<div class="card back"></div>`;
+    return `<div class="hand-cards">${html}</div>`;
+}
+
+function humanCanSelect() {
+    return gPlaying && !gResult && currentPlayer(gRoundHistory) === gHuman;
+}
+
 function renderHands() {
     const you = document.getElementById('hand-human');
     const opp = document.getElementById('hand-opp');
     const chY = document.getElementById('chambers-human');
     const chO = document.getElementById('chambers-opp');
     if (!gPlaying || !gChambers) {
-        you.textContent = ''; opp.textContent = ''; chY.textContent = ''; chO.textContent = '';
+        you.innerHTML = ''; opp.innerHTML = ''; chY.textContent = ''; chO.textContent = '';
         return;
     }
-    you.textContent = handLabel(gHands[gHuman]);
+    you.innerHTML = renderCardRow(gHands[gHuman], humanCanSelect());
     chY.textContent = chamberDots(gChambers[gHuman]);
     chO.textContent = chamberDots(gChambers[1 - gHuman]);
     // Remaining card COUNT is public (it's how the forced-call rule works at
     // all) — only the safe/liar COMPOSITION is hidden until a call reveals it.
-    const oppCount = gRemaining[1 - gHuman];
     if (gResult && gResult.revealedBy === (1 - gHuman)) {
-        opp.textContent = handLabel(gResult.revealedHand);
+        opp.innerHTML = renderCardRow(gResult.revealedHand, false);
     } else {
-        opp.textContent = `${oppCount} card${oppCount === 1 ? '' : 's'} face down`;
+        opp.innerHTML = renderFaceDownRow(gRemaining[1 - gHuman]);
     }
 }
 
@@ -506,7 +574,7 @@ function renderInfo() {
         html += `<div class="history">Plays so far (sizes): [${gRoundHistory.join(', ')}]</div>`;
     }
     if (gLastAi) {
-        html += `<div class="ai-action">Opponent: ${actionLabelText(gLastAi)}</div>`;
+        html += `<div class="ai-action">Opponent: ${actionLabelPublic(gLastAi)}</div>`;
     }
     el.innerHTML = html;
 }
@@ -562,12 +630,48 @@ function renderActions() {
         return;
     }
 
-    const actions = legalActions(gHands[gHuman], gRemaining, gLastPlay ? { player: gLastPlay.player } : null);
-    const btns = actions.map((a, i) => {
-        const hk = i + 1;
-        return `<button class="btn btn-action" onclick="humanAct(${JSON.stringify(a).replace(/"/g, '&quot;')})">${actionLabelText(a)} <kbd>${hk}</kbd></button>`;
-    }).join('');
-    actEl.innerHTML = `<div class="actions">${btns}</div>`;
+    const lastPlayPlayer = gLastPlay ? { player: gLastPlay.player } : null;
+    let html = '<div class="actions">';
+    if (canCallLiar(lastPlayPlayer)) {
+        html += `<button class="btn btn-action" onclick="humanAct({type:'call'})">Call Liar <kbd>C</kbd></button>`;
+    }
+    if (!callIsForced(gRemaining, lastPlayPlayer)) {
+        const sel = currentSelectionAction();
+        const label = sel ? `Play ${handTotal(sel.hand)} card${handTotal(sel.hand) === 1 ? '' : 's'}` : 'Select 1-3 cards to play';
+        const disabled = sel ? '' : 'disabled';
+        html += `<button class="btn btn-action" id="play-btn" ${disabled} onclick="playSelected()">${label} <kbd>Enter</kbd></button>`;
+    }
+    html += '</div>';
+    actEl.innerHTML = html;
+}
+
+// The human may select any 1-3 of their own cards, any mix of kinds — see
+// the note on legalActions() for why that's fine even though the AI's own
+// choices stay restricted to pure plays.
+function toggleCardSelect(idx) {
+    if (!humanCanSelect()) return;
+    if (gSelected.has(idx)) {
+        gSelected.delete(idx);
+    } else {
+        if (gSelected.size >= MAX_PLAY) return;
+        gSelected.add(idx);
+    }
+    render();
+}
+
+function currentSelectionAction() {
+    if (gSelected.size === 0) return null;
+    const hand = gHands[gHuman];
+    let safe = 0, liar = 0;
+    for (const idx of gSelected) { if (idx < hand.safe) safe++; else liar++; }
+    return { type: 'play', hand: { safe, liar } };
+}
+
+function playSelected() {
+    const action = currentSelectionAction();
+    if (!action) return;
+    gSelected.clear();
+    humanAct(action);
 }
 
 function renderStats() {
@@ -611,11 +715,14 @@ document.addEventListener('keydown', e => {
         }
         return;
     }
-    const p = currentPlayer(gRoundHistory);
-    if (p !== gHuman) return;
-    const actions = legalActions(gHands[gHuman], gRemaining, gLastPlay ? { player: gLastPlay.player } : null);
-    const idx = parseInt(e.key, 10) - 1;
-    if (idx >= 0 && idx < actions.length) { e.preventDefault(); humanAct(actions[idx]); }
+    if (!humanCanSelect()) return;
+    const lastPlayPlayer = gLastPlay ? { player: gLastPlay.player } : null;
+    if ((e.key === 'c' || e.key === 'C') && canCallLiar(lastPlayPlayer)) {
+        e.preventDefault(); humanAct({ type: 'call' }); return;
+    }
+    if (e.key === 'Enter' && !callIsForced(gRemaining, lastPlayPlayer)) {
+        e.preventDefault(); playSelected();
+    }
 });
 
 // ── Help modal ─────────────────────────────────────────────────────────────
