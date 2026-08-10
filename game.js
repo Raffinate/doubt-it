@@ -182,7 +182,8 @@ let gRoundNum = 0;              // 1-indexed round number within the current mat
 let gRoundHistory = [];         // play sizes this round, e.g. [2,1]
 let gLastPlay = null;           // {player, hand:{safe,liar}} — hand only known to the actor until reveal
 let gHuman = 0;
-let gResult = null;             // set once a call resolves; see recordResult()
+let gResult = null;              // set once the spin actually resolves; see recordResult()
+let gPendingSpin = null;         // {spinner, correct, revealedHand, revealedBy} — call made & revealed, waiting for the spinner to explicitly trigger the spin
 let gLastAi = null;             // last AI action, for display
 let gStats = { matches: 0, matchWins: 0, matchLosses: 0, correctCalls: 0, incorrectCalls: 0 };
 let gPlaying = false;
@@ -320,7 +321,7 @@ function mpReceive(msg) {
         gChambers = msg.chambers;
         gRoundNum = msg.round;
         gRemaining = [5, 5];
-        gRoundHistory = []; gLastPlay = null; gResult = null; gLastAi = null;
+        gRoundHistory = []; gLastPlay = null; gResult = null; gPendingSpin = null; gLastAi = null;
         gSelected.clear();
         render();
     } else if (msg.type === 'state') {
@@ -328,13 +329,21 @@ function mpReceive(msg) {
         gLastPlay = msg.lastPlay ? { player: msg.lastPlay.player, hand: null, size: msg.lastPlay.size } : null;
         gRemaining = msg.remaining;
         render();
+    } else if (msg.type === 'pending_spin') {
+        gPendingSpin = msg.payload;
+        render();
+    } else if (msg.type === 'trigger_spin') {
+        // Host receives the guest's request to spin — the guest is the
+        // spinner but isn't authoritative over the RNG, so the host performs
+        // the actual spin and reports the result back.
+        performSpin();
     } else if (msg.type === 'result') {
         recordResult(msg.payload);
         render();
     } else if (msg.type === 'action') {
         // host receives guest's action
         applyAction(msg.action, gGuestSeat);
-        if (gResult === null) { mpSendState(); advance(); }
+        if (gResult === null && gPendingSpin === null) { mpSendState(); advance(); }
     } else if (msg.type === 'new_session') {
         gStats = { matches: 0, matchWins: 0, matchLosses: 0, correctCalls: 0, incorrectCalls: 0 };
         gHistory = [];
@@ -363,7 +372,7 @@ function newMatch() {
 
 function newRound() {
     gRoundNum++;
-    gRoundHistory = []; gLastPlay = null; gResult = null; gLastAi = null;
+    gRoundHistory = []; gLastPlay = null; gResult = null; gPendingSpin = null; gLastAi = null;
     gRemaining = [5, 5];
     gSelected.clear();
     if (gMode === 'mp-host') {
@@ -386,7 +395,7 @@ function continueAfterResult() {
 
 function advance() {
     while (true) {
-        if (gResult !== null) return;
+        if (gResult !== null || gPendingSpin !== null) return;
         const p = currentPlayer(gRoundHistory);
         if (p !== gHuman) {
             if (gMode !== 'solo') { render(); return; } // wait for remote action
@@ -401,11 +410,20 @@ function advance() {
     render();
 }
 
+// A call reveals the challenged play immediately, but does NOT resolve the
+// spin yet — that's a separate, explicit step (see triggerSpin/performSpin)
+// so the spinner (or, in solo play, the human) has to consciously pull the
+// trigger rather than have it happen automatically.
 function applyAction(action, player) {
     gLastAi = null;
     if (action.type === 'call') {
         const spinner = gLastPlay.hand && gLastPlay.hand.liar > 0 ? gLastPlay.player : 1 - gLastPlay.player;
-        resolveCallRound(spinner);
+        gPendingSpin = {
+            spinner, correct: 1 - spinner,
+            revealedHand: gLastPlay.hand, revealedBy: gLastPlay.player,
+        };
+        if (gMode === 'mp-host') mpSend({ type: 'pending_spin', payload: gPendingSpin });
+        render();
         return;
     }
     gHands[player] = handSub(gHands[player], action.hand);
@@ -424,32 +442,51 @@ function humanAct(action) {
             gLastPlay = { player: gHuman, hand: action.hand };
             gRoundHistory.push(handTotal(action.hand));
         }
-        // 'call' waits for the host's authoritative 'result' — the guest never
-        // samples its own spin, since that would diverge from the host's.
+        // 'call' waits for the host's authoritative 'pending_spin'/'result' —
+        // the guest never samples its own spin, since that would diverge
+        // from the host's.
         render();
     } else {
         applyAction(action, gHuman);
-        if (gMode === 'mp-host' && gResult === null) mpSendState();
-        if (gResult === null) advance();
+        if (gResult === null && gPendingSpin === null) {
+            if (gMode === 'mp-host') mpSendState();
+            advance();
+        }
     }
 }
 
-// Resolve a call: the spinner takes one solo spin at their CURRENT chambers.
-// Dies -> match over. Survives -> their chambers drop by one (the other
-// player's are untouched) and the match continues to a new round.
-function resolveCallRound(spinner) {
-    const correct = 1 - spinner;
+// Solo play: the human always triggers, regardless of who the spinner is —
+// only they have any agency to press a key. Multiplayer: only the actual
+// spinner may trigger their own spin; the other player just watches.
+function canTriggerSpin() {
+    if (!gPendingSpin) return false;
+    if (gMode === 'solo') return true;
+    return gPendingSpin.spinner === gHuman;
+}
+
+function triggerSpin() {
+    if (!canTriggerSpin()) return;
+    if (gMode === 'mp-guest') {
+        // The guest is the spinner but isn't authoritative over the RNG —
+        // ask the host to actually perform the spin.
+        mpSend({ type: 'trigger_spin' });
+        return;
+    }
+    performSpin();
+}
+
+// The spinner takes one solo spin at their CURRENT chambers. Dies -> match
+// over. Survives -> their chambers drop by one (the other player's are
+// untouched) and the match continues to a new round. Only ever called on the
+// host/solo side — the authoritative side that owns the RNG.
+function performSpin() {
+    const { spinner, correct, revealedHand, revealedBy } = gPendingSpin;
     const died = sampleSpin(gChambers[spinner]);
-    const chambersBefore = gChambers.slice();
     if (died) gChambers[spinner] = 0;
     else gChambers[spinner] -= 1;
 
-    const payload = {
-        spinner, correct, died, round: gRoundNum,
-        chambersBefore, chambersAfter: gChambers.slice(),
-        revealedHand: gLastPlay.hand, revealedBy: gLastPlay.player,
-        matchOver: died,
-    };
+    const payload = { spinner, correct, died, round: gRoundNum, revealedHand, revealedBy, matchOver: died };
+    gPendingSpin = null;
     recordResult(payload);
     if (gMode === 'mp-host') mpSend({ type: 'result', payload });
     render();
@@ -553,8 +590,9 @@ function renderFaceDownRow(count) {
 function renderPile() {
     const el = document.getElementById('pile');
     if (!gPlaying || !gChambers) { el.innerHTML = ''; return; }
-    if (gResult) {
-        el.innerHTML = renderCardRow(gResult.revealedHand, false, true);
+    const revealed = gResult || gPendingSpin; // a call reveals immediately; the spin resolves later
+    if (revealed) {
+        el.innerHTML = renderCardRow(revealed.revealedHand, false, true);
     } else if (gLastPlay) {
         const size = gLastPlay.hand ? handTotal(gLastPlay.hand) : gLastPlay.size;
         el.innerHTML = renderFaceDownRow(size);
@@ -564,7 +602,7 @@ function renderPile() {
 }
 
 function humanCanSelect() {
-    return gPlaying && !gResult && currentPlayer(gRoundHistory) === gHuman;
+    return gPlaying && !gResult && !gPendingSpin && currentPlayer(gRoundHistory) === gHuman;
 }
 
 function renderHands() {
@@ -581,8 +619,9 @@ function renderHands() {
     chO.textContent = chamberDots(gChambers[1 - gHuman]);
     // Remaining card COUNT is public (it's how the forced-call rule works at
     // all) — only the safe/liar COMPOSITION is hidden until a call reveals it.
-    if (gResult && gResult.revealedBy === (1 - gHuman)) {
-        opp.innerHTML = renderCardRow(gResult.revealedHand, false, true);
+    const revealed = gResult || gPendingSpin;
+    if (revealed && revealed.revealedBy === (1 - gHuman)) {
+        opp.innerHTML = renderCardRow(revealed.revealedHand, false, true);
     } else {
         opp.innerHTML = renderFaceDownRow(gRemaining[1 - gHuman]);
     }
@@ -604,6 +643,21 @@ function renderInfo() {
 
 function renderResolution() {
     const el = document.getElementById('resolution-area');
+    if (gPendingSpin) {
+        const { spinner, correct, revealedHand, revealedBy } = gPendingSpin;
+        const revealedByStr = revealedBy === gHuman ? 'Your' : "Opponent's";
+        const verdict = revealedHand.liar > 0 ? 'a LIE' : 'truthful';
+        const correctStr = correct === gHuman ? 'You were' : 'Opponent was';
+        const spinnerName = spinner === gHuman ? 'You' : 'Opponent';
+        const prompt = canTriggerSpin()
+            ? `<div class="dim">Press <kbd>Space</kbd> to spin the revolver…</div>`
+            : `<div class="dim">Waiting for ${spinnerName.toLowerCase()} to spin…</div>`;
+        el.innerHTML = `
+            <div class="reveal">${revealedByStr} challenged play is revealed: ${verdict} (${handLabel(revealedHand)})</div>
+            <div class="result draw"><span class="chips">${correctStr} correct</span></div>
+            ${prompt}`;
+        return;
+    }
     if (!gResult) { el.innerHTML = ''; return; }
     const { spinner, correct, died, revealedHand, revealedBy, matchOver } = gResult;
     const revealedByStr = revealedBy === gHuman ? 'Your' : "Opponent's";
@@ -637,6 +691,15 @@ function renderActions() {
     actEl.innerHTML = '';
     if (!gPlaying) return;
 
+    if (gPendingSpin) {
+        if (canTriggerSpin()) {
+            actEl.innerHTML = `<button class="btn btn-action" onclick="triggerSpin()">Spin the revolver <kbd>Space</kbd></button>`;
+        } else {
+            actEl.innerHTML = `<div class="dim">Waiting…</div>`;
+        }
+        return;
+    }
+
     if (gResult) {
         if (gMode !== 'mp-guest') {
             const label = gResult.matchOver ? 'New match' : 'Next round';
@@ -662,7 +725,7 @@ function renderActions() {
         const sel = currentSelectionAction();
         const label = sel ? `Play ${handTotal(sel.hand)} card${handTotal(sel.hand) === 1 ? '' : 's'}` : 'Select 1-3 cards to play';
         const disabled = sel ? '' : 'disabled';
-        html += `<button class="btn btn-action" id="play-btn" ${disabled} onclick="playSelected()">${label} <kbd>Enter</kbd></button>`;
+        html += `<button class="btn btn-action" id="play-btn" ${disabled} onclick="playSelected()">${label} <kbd>Space</kbd></button>`;
     }
     html += '</div>';
     actEl.innerHTML = html;
@@ -732,6 +795,10 @@ document.addEventListener('keydown', e => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === 'Escape') { closeHelp(); return; }
     if (!gPlaying) return;
+    if (gPendingSpin) {
+        if (e.key === ' ' && canTriggerSpin()) { e.preventDefault(); triggerSpin(); }
+        return;
+    }
     if (gResult) {
         if (gMode !== 'mp-guest' && (e.key === ' ' || e.key === 'Enter')) {
             e.preventDefault(); continueAfterResult();
@@ -743,7 +810,7 @@ document.addEventListener('keydown', e => {
     if ((e.key === 'c' || e.key === 'C') && canCallLiar(lastPlayPlayer)) {
         e.preventDefault(); humanAct({ type: 'call' }); return;
     }
-    if (e.key === 'Enter' && !callIsForced(gRemaining, lastPlayPlayer)) {
+    if (e.key === ' ' && !callIsForced(gRemaining, lastPlayPlayer)) {
         e.preventDefault(); playSelected();
     }
 });
@@ -768,6 +835,7 @@ function startGame(strategy) {
     gStats = { matches: 0, matchWins: 0, matchLosses: 0, correctCalls: 0, incorrectCalls: 0 };
     gPlaying = false;
     gResult = null;
+    gPendingSpin = null;
 
     if (strategy === 'human') {
         mpHost();
@@ -790,6 +858,7 @@ function stopGame() {
     mpDisconnect();
     gPlaying = false;
     gChambers = null;
+    gPendingSpin = null;
     gHistory = [];
     setStatus('idle');
     document.getElementById('game-info').innerHTML = '';
