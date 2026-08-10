@@ -163,13 +163,13 @@ kbd {
 #status.error { color: var(--err); }
 #status.loading { color: var(--text-mid); }
 
-/* ── Hands row ─────────────────────────────────────────────────── */
+/* ── Hands row: opponent above, you below — sitting across a table ────── */
 #hands-row {
     display: flex;
-    gap: 40px;
-    align-items: flex-start;
+    flex-direction: column;
+    gap: 14px;
     margin-bottom: 20px;
-    flex-wrap: wrap;
+    max-width: 420px;
 }
 
 .hand-slot label {
@@ -226,6 +226,27 @@ kbd {
     background: #1a3680;
     border: 1px solid #2a4a9a;
     cursor: default;
+}
+/* Pile reveal: framing shows each card's TRUE kind (truthful vs a lie),
+   independent of the overall play's verdict — a mixed play shows both. */
+.card.truthful {
+    border-color: #22d3ee;
+    border-width: 2px;
+    box-shadow: 0 0 6px rgba(34, 211, 238, 0.5);
+}
+.card.lie {
+    border-color: #ef4444;
+    border-width: 2px;
+    box-shadow: 0 0 6px rgba(239, 68, 68, 0.5);
+}
+
+#pile {
+    min-height: 66px;
+}
+.pile-empty {
+    font-size: 12px;
+    color: var(--text-faint);
+    line-height: 66px;
 }
 
 .chambers {
@@ -457,15 +478,19 @@ kbd {
 
 <div id="hands-row">
     <div class="hand-slot">
-        <label>You</label>
-        <div class="hand-value" id="hand-human"></div>
-        <div class="chambers" id="chambers-human"></div>
-        <div class="chambers-label">Chambers</div>
-    </div>
-    <div class="hand-slot">
         <label>Opponent</label>
         <div class="hand-value" id="hand-opp"></div>
         <div class="chambers" id="chambers-opp"></div>
+        <div class="chambers-label">Chambers</div>
+    </div>
+    <div class="hand-slot">
+        <label>Pile — last play</label>
+        <div class="hand-value" id="pile"></div>
+    </div>
+    <div class="hand-slot">
+        <label>You</label>
+        <div class="hand-value" id="hand-human"></div>
+        <div class="chambers" id="chambers-human"></div>
         <div class="chambers-label">Chambers</div>
     </div>
 </div>

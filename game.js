@@ -508,6 +508,7 @@ function actionLabelPublic(action) {
 
 function render() {
     renderHands();
+    renderPile();
     renderInfo();
     renderResolution();
     renderActions();
@@ -517,19 +518,25 @@ function render() {
 
 // One visual card per remaining card in `hand`, Face cards first then Number
 // cards, indices 0..hand.safe-1 / hand.safe..hand.safe+hand.liar-1. Clicking
-// a card toggles it in gSelected when `interactive`.
-function renderCardRow(hand, interactive) {
+// a card toggles it in gSelected when `interactive`. When `revealed` is true
+// (this hand is a challenged play whose true composition is now public),
+// each card is framed by its OWN true kind — cyan for a genuine Face card,
+// red for a Number card — independent of the play's overall verdict, so a
+// mixed play visibly shows both colors at once.
+function renderCardRow(hand, interactive, revealed) {
     let html = '';
     for (let i = 0; i < hand.safe; i++) {
         const sel = gSelected.has(i) ? ' selected' : '';
+        const verdict = revealed ? ' truthful' : '';
         const click = interactive ? ` onclick="toggleCardSelect(${i})"` : '';
-        html += `<div class="card face${sel}"${click}>K</div>`;
+        html += `<div class="card face${sel}${verdict}"${click}>K</div>`;
     }
     for (let i = 0; i < hand.liar; i++) {
         const idx = hand.safe + i;
         const sel = gSelected.has(idx) ? ' selected' : '';
+        const verdict = revealed ? ' lie' : '';
         const click = interactive ? ` onclick="toggleCardSelect(${idx})"` : '';
-        html += `<div class="card number${sel}"${click}>7</div>`;
+        html += `<div class="card number${sel}${verdict}"${click}>7</div>`;
     }
     return `<div class="hand-cards">${html}</div>`;
 }
@@ -538,6 +545,22 @@ function renderFaceDownRow(count) {
     let html = '';
     for (let i = 0; i < count; i++) html += `<div class="card back"></div>`;
     return `<div class="hand-cards">${html}</div>`;
+}
+
+// The pile sits between the two hands and always shows the LAST play only
+// (not a cumulative history): face-down card backs sized to the play, until
+// a call flips them to their true, framed composition.
+function renderPile() {
+    const el = document.getElementById('pile');
+    if (!gPlaying || !gChambers) { el.innerHTML = ''; return; }
+    if (gResult) {
+        el.innerHTML = renderCardRow(gResult.revealedHand, false, true);
+    } else if (gLastPlay) {
+        const size = gLastPlay.hand ? handTotal(gLastPlay.hand) : gLastPlay.size;
+        el.innerHTML = renderFaceDownRow(size);
+    } else {
+        el.innerHTML = '<div class="pile-empty">no play yet</div>';
+    }
 }
 
 function humanCanSelect() {
@@ -559,7 +582,7 @@ function renderHands() {
     // Remaining card COUNT is public (it's how the forced-call rule works at
     // all) — only the safe/liar COMPOSITION is hidden until a call reveals it.
     if (gResult && gResult.revealedBy === (1 - gHuman)) {
-        opp.innerHTML = renderCardRow(gResult.revealedHand, false);
+        opp.innerHTML = renderCardRow(gResult.revealedHand, false, true);
     } else {
         opp.innerHTML = renderFaceDownRow(gRemaining[1 - gHuman]);
     }
@@ -773,6 +796,7 @@ function stopGame() {
     document.getElementById('actions-area').innerHTML = '';
     document.getElementById('resolution-area').innerHTML = '';
     document.getElementById('history-log').innerHTML = '';
+    document.getElementById('pile').innerHTML = '';
     renderHands();
     renderStats();
     if (gStrategy === 'human') {
