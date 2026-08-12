@@ -5,7 +5,7 @@ const HAND_SIZE = 5;
 const MAX_PLAY = 3;
 const DECK = { safe: 8, liar: 12 };
 
-const STRATEGIES = ['exact', 'sudden_death', 'always_call', 'always_bluff', 'random'];
+const STRATEGIES = ['exact', 'sudden_death', 'always_call', 'always_bluff', 'random', 'cautious', 'nervous'];
 const ALL_STRATEGIES = ['human', ...STRATEGIES];
 
 const STRATEGY_LABELS = {
@@ -14,6 +14,8 @@ const STRATEGY_LABELS = {
     always_call: 'The Skeptic',
     always_bluff: 'The Gambler',
     random: 'The Wildcard',
+    cautious: 'The Nit',
+    nervous: 'The Paranoid',
     human: 'vs Human',
 };
 
@@ -152,11 +154,12 @@ function sampleSpin(chambers) {
 }
 
 // ── Strategy dispatch ──────────────────────────────────────────────────────
-// All 5 strategies (exact, sudden_death, always_call, always_bluff, random)
-// are driven identically: fetch their precomputed JSON table, look up the
-// info-state key, sample from the returned distribution. The 3 heuristics'
-// decision logic is already baked into their own JSON tables by the Rust
-// exporter, so there's nothing game-specific to reimplement here.
+// All 7 strategies (exact, sudden_death, always_call, always_bluff, random,
+// cautious, nervous) are driven identically: fetch their precomputed JSON
+// table, look up the info-state key, sample from the returned distribution.
+// The 5 heuristics' decision logic is already baked into their own JSON
+// tables by the Rust exporter, so there's nothing game-specific to
+// reimplement here.
 
 function chooseAction(strategyData, hand, ownChambers, oppChambers, roundHistory, actions) {
     const key = infoStateKey(hand, ownChambers, oppChambers, roundHistory);
@@ -851,7 +854,9 @@ function startGame(strategy) {
         .then(r => r.json())
         .catch(() => { setStatus('error'); throw null; })
         .then(data => {
-            gStrategyData = data;
+            // The Rust exporter wraps the info-state table under a "strategy" key,
+            // alongside "meta" (and "state" for CFR strategies).
+            gStrategyData = data.strategy;
             gPlaying = true;
             setStatus('playing');
             newMatch();
