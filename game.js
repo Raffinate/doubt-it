@@ -5,7 +5,7 @@ const HAND_SIZE = 5;
 const MAX_PLAY = 3;
 const DECK = { safe: 8, liar: 12 };
 
-const STRATEGIES = ['exact', 'sudden_death', 'always_call', 'always_bluff', 'random', 'cautious', 'nervous'];
+const STRATEGIES = ['exact', 'sudden_death', 'always_call', 'always_bluff', 'random', 'cautious', 'nervous', 'exploit_cautious'];
 const ALL_STRATEGIES = ['human', ...STRATEGIES];
 
 const STRATEGY_LABELS = {
@@ -16,6 +16,7 @@ const STRATEGY_LABELS = {
     random: 'The Wildcard',
     cautious: 'The Nit',
     nervous: 'The Paranoid',
+    exploit_cautious: 'The Trapper',
     human: 'vs Human',
 };
 
@@ -154,12 +155,13 @@ function sampleSpin(chambers) {
 }
 
 // ── Strategy dispatch ──────────────────────────────────────────────────────
-// All 7 strategies (exact, sudden_death, always_call, always_bluff, random,
-// cautious, nervous) are driven identically: fetch their precomputed JSON
-// table, look up the info-state key, sample from the returned distribution.
-// The 5 heuristics' decision logic is already baked into their own JSON
-// tables by the Rust exporter, so there's nothing game-specific to
-// reimplement here.
+// All 8 strategies (exact, sudden_death, always_call, always_bluff, random,
+// cautious, nervous, exploit_cautious) are driven identically: fetch their
+// precomputed JSON table, look up the info-state key, sample from the
+// returned distribution. The non-CFR strategies' decision logic is already
+// baked into their own JSON tables by the Rust exporter (exploit_cautious is
+// the exact best response to cautious, flattened the same way), so there's
+// nothing game-specific to reimplement here.
 
 function chooseAction(strategyData, hand, ownChambers, oppChambers, roundHistory, actions) {
     const key = infoStateKey(hand, ownChambers, oppChambers, roundHistory);
