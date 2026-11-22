@@ -1,0 +1,98 @@
+@layer ui-sdk;
+@import "tailwindcss";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent: var(--accent);
+  --color-felt: var(--felt);
+  --color-felt-foreground: var(--felt-foreground);
+  --color-face: var(--face);
+  --color-number: var(--number);
+  --color-truth: var(--truth);
+  --color-lie: var(--lie);
+  --color-win: var(--win);
+  --color-loss: var(--loss);
+  --color-danger: var(--danger);
+  --radius-lg: 0.625rem;
+  --radius-md: calc(0.625rem - 2px);
+  --radius-sm: calc(0.625rem - 4px);
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-card: Georgia, "Times New Roman", serif;
+}
+
+:root {
+  color-scheme: light;
+  --background: oklch(0.985 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.5 0 0);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.87 0 0);
+  --ring: oklch(0.6 0.12 240);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --accent: oklch(0.96 0 0);
+  --felt: oklch(0.42 0.07 160);
+  --felt-foreground: oklch(0.9 0.03 160);
+  --face: oklch(0.5 0.17 25);
+  --number: oklch(0.42 0.14 262);
+  --truth: oklch(0.7 0.13 205);
+  --lie: oklch(0.6 0.22 27);
+  --win: oklch(0.55 0.15 150);
+  --loss: oklch(0.55 0.2 27);
+  --danger: oklch(0.55 0.2 27);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.97 0 0);
+  --card: oklch(0.19 0 0);
+  --muted: oklch(0.24 0 0);
+  --muted-foreground: oklch(0.7 0 0);
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 20%);
+  --ring: oklch(0.7 0.12 240);
+  --primary: oklch(0.92 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --accent: oklch(0.27 0 0);
+  --felt: oklch(0.3 0.05 160);
+  --felt-foreground: oklch(0.85 0.03 160);
+  --truth: oklch(0.8 0.13 205);
+  --lie: oklch(0.68 0.2 27);
+  --win: oklch(0.75 0.15 150);
+  --loss: oklch(0.7 0.18 27);
+  --danger: oklch(0.7 0.18 27);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+[data-slot="select-content"] {
+  max-height: min(24rem, var(--available-height));
+  min-width: var(--anchor-width);
+}
+
+/* Card back: a fine diagonal lattice, the same in both themes like a real deck. */
+.card-back {
+  background-color: #1e3a8a;
+  background-image:
+    repeating-linear-gradient(45deg, rgb(255 255 255 / 0.12) 0 2px, transparent 2px 7px),
+    repeating-linear-gradient(-45deg, rgb(255 255 255 / 0.12) 0 2px, transparent 2px 7px);
+}
