@@ -94,14 +94,6 @@ export function HelpDialog(props: { open: boolean; onOpenChange: (open: boolean)
 
           <H>Opponents</H>
           <Rows rows={opponents.map((o) => [o.name, o.blurb])} />
-          <p class="mt-2 text-muted-foreground">
-            Strategies are solved or scripted by the{" "}
-            <a class="underline underline-offset-2 hover:text-foreground" href="https://github.com/Raffinate/holdem_solver">
-              holdemsolver
-            </a>{" "}
-            project and shipped as lookup tables. The Dealer is a CFR solution; the Trapper is the exact best response
-            to the Nit.
-          </p>
         </div>
       </DialogContent>
     </Dialog>
