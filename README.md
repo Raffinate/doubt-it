@@ -39,7 +39,7 @@ an all-in doesn't mean the shove was +EV.
 | The Trapper  | `exploit_cautious` | Knows the Nit's whole game before it's dealt.    |
 
 All are CFR-solved or heuristic strategies computed by the
-[`holdemsolver`](https://github.com/Raffinate/holdem_solver) Rust project's Liar's Deck model and
+`holdemsolver` Rust project's Liar's Deck model and
 exported as JSON lookup tables in `public/data/`. The list lives in `src/game/strategies.ts`;
 `src/game/data.test.ts` checks every table still matches the client's key format.
 

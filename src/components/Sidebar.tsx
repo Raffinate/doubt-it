@@ -45,7 +45,7 @@ export function OpponentPanel(props: {
 }) {
   const blurb = () =>
     props.opponent === FRIEND
-      ? "Host a game and send the invite link, or join a friend's. Peer to peer: nothing goes through a server."
+      ? "Host a game and send your friend the invite link, or join theirs."
       : opponents.find((o) => o.id === props.opponent)?.blurb
   return (
     <Panel title="Opponent" class="space-y-4">

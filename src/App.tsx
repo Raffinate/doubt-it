@@ -99,7 +99,7 @@ export function App() {
       })
       .catch(() => {
         setPhase("idle")
-        setError("Couldn't load this opponent's strategy. Check your connection and try again.")
+        setError("Couldn't load this opponent. Check your connection and try again.")
       })
   }
 
@@ -297,11 +297,7 @@ export function App() {
       </div>
 
       <footer class="mt-8 text-xs text-muted-foreground">
-        Strategies from{" "}
-        <a class="underline underline-offset-2 hover:text-foreground" href="https://github.com/Raffinate/holdem_solver">
-          holdemsolver
-        </a>
-        . Source on{" "}
+        Source on{" "}
         <a class="underline underline-offset-2 hover:text-foreground" href="https://github.com/Raffinate/doubt-it">
           GitHub
         </a>
