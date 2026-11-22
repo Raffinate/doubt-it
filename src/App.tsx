@@ -207,13 +207,40 @@ export function App() {
     <div class="mx-auto max-w-6xl px-4 py-6 sm:py-10">
       <header class="mb-6">
         <div class="-my-1.5 flex items-center justify-between gap-4">
-          <a
-            href="https://raffinate.github.io/"
-            class="text-xs font-medium text-muted-foreground hover:text-foreground"
-            data-ph-capture-attribute-action="home"
-          >
-            ← Raffinate
-          </a>
+          <nav aria-label="Breadcrumb">
+            <ol class="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              <li>
+                <a
+                  href="https://raffinate.github.io/"
+                  class="inline-flex items-center gap-1.5 hover:text-foreground"
+                  data-ph-capture-attribute-action="home"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    class="size-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8" />
+                    <path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                  </svg>
+                  Home
+                </a>
+              </li>
+              <li aria-hidden="true">
+                <svg viewBox="0 0 24 24" class="size-3.5 opacity-60" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="m9 18 6-6-6-6" />
+                </svg>
+              </li>
+              <li aria-current="page" class="text-foreground">
+                Doubt It
+              </li>
+            </ol>
+          </nav>
           <div class="flex items-center gap-1">
             <Button class={buttonClass.ghost} onClick={() => setHelpOpen(true)} data-ph-capture-attribute-action="help">
               How to play
