@@ -60,7 +60,7 @@ export function OwnHand(props: {
   interactive: boolean
   onToggle: (index: number) => void
 }) {
-  const card = (index: number, kind: Kind) => {
+  const card = (index: number, kind: () => Kind) => {
     const pressed = () => props.selected.includes(index)
     return (
       <Toggle
@@ -68,8 +68,8 @@ export function OwnHand(props: {
         disabled={!props.interactive}
         onPressedChange={() => props.onToggle(index)}
         onMouseDown={(e: MouseEvent) => e.preventDefault()}
-        aria-label={kind === "face" ? "Face card" : "Number card"}
-        data-ph-capture-attribute-card={kind}
+        aria-label={kind() === "face" ? "Face card" : "Number card"}
+        data-ph-capture-attribute-card={kind()}
         class={[
           size,
           "block outline-none transition-transform duration-150 focus-visible:ring-3 focus-visible:ring-ring/60 data-pressed:-translate-y-2.5 motion-reduce:transition-none",
@@ -82,15 +82,16 @@ export function OwnHand(props: {
             pressed() && "shadow-lg ring-2 ring-ring ring-offset-2 ring-offset-felt",
           ]}
         >
-          <Face kind={kind} />
+          <Face kind={kind()} />
         </span>
       </Toggle>
     )
   }
   return (
     <div class="flex flex-wrap gap-1.5 pt-2.5">
-      <Repeat count={props.hand.safe}>{(i) => card(i, "face")}</Repeat>
-      <Repeat count={props.hand.liar}>{(i) => card(props.hand.safe + i, "number")}</Repeat>
+      <Repeat count={props.hand.safe + props.hand.liar}>
+        {(i) => card(i, () => (i < props.hand.safe ? "face" : "number"))}
+      </Repeat>
       <Show when={props.hand.safe + props.hand.liar === 0}>
         <p class="flex h-[4.5rem] items-center text-sm text-felt-foreground/70 sm:h-20">No cards left</p>
       </Show>
